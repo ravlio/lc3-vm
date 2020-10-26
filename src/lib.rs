@@ -1,3 +1,5 @@
+mod memory;
+
 #[macro_use]
 extern crate enum_primitive_derive;
 extern crate num_traits;
@@ -339,4 +341,9 @@ fn sign_extend(x: u16, bit_count: i16) -> u16 {
     } else {
         x
     }
+}
+
+#[cfg(test)]
+mod tests {
+
 }
