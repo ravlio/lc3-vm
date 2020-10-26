@@ -132,9 +132,6 @@ impl VM {
             self.inc_reg(Reg::PC as usize, 1);
             let op = instr >> 12;
 
-            println!("pc: {}", self.get_reg(Reg::PC as usize));
-            println!("op: {:?}", Opcode::from_u16(op).unwrap());
-            println!("{:b}", instr);
             match Opcode::from_u16(op) {
                 Some(Opcode::ADD) => {
                     let r0 = ((instr >> 9) & 0x7) as usize;
@@ -143,11 +140,10 @@ impl VM {
 
                     if imm_flag == 1 {
                         let imm5 = sign_extend(instr & 0x1F, 5);
-                        self.set_reg(r0, self.get_reg(r1) + imm5);
+                        self.set_reg(r0, self.get_reg(r1).wrapping_add(imm5));
                     } else {
                         let r2 = (instr & 0x7) as usize;
-                        println!("r0 {} r1 {} r2 {}", self.reg[r0], self.reg[r1], self.reg[r2]);
-                        self.set_reg(r0, self.get_reg(r1) + self.get_reg(r2));
+                        self.set_reg(r0, self.get_reg(r1).wrapping_add(self.get_reg(r2)));
                     }
                     self.update_flags(r0);
                 }
@@ -155,7 +151,8 @@ impl VM {
                     let r0 = ((instr >> 9) & 0b111) as usize;
                     let pc_offset = sign_extend(instr & 0x1FF, 9);
                     let addr = self.mem_read(self.reg[Reg::PC as usize] + pc_offset);
-                    self.set_reg(r0, self.mem_read(addr));
+                    let mem = self.mem_read(addr);
+                    self.set_reg(r0, mem);
                     self.update_flags(r0);
                 }
                 Some(Opcode::AND) => {
@@ -195,16 +192,18 @@ impl VM {
                     }
                 }
                 Some(Opcode::LD) => {
-                    let pc_offset = sign_extend(instr & 0x1FF, 9);
                     let r0 = ((instr >> 9) & 0x7) as usize;
-                    self.set_reg(r0, self.mem_read(self.get_reg(Reg::PC as usize) + pc_offset));
+                    let pc_offset = sign_extend(instr & 0x1FF, 9);
+                    let mem = self.mem_read(self.get_reg(Reg::PC as usize) + pc_offset);
+                    self.set_reg(r0, mem);
                     self.update_flags(r0);
                 }
                 Some(Opcode::LDR) => {
                     let r0 = ((instr >> 9) & 0x7) as usize;
                     let r1 = ((instr >> 6) & 0x7) as usize;
                     let offset = sign_extend(instr & 0x3F, 6);
-                    self.set_reg(r0, self.mem_read(self.get_reg(r1) + offset));
+                    let mem = self.mem_read(self.get_reg(r1));
+                    self.set_reg(r0, mem + offset);
                     self.update_flags(r0);
                 }
                 Some(Opcode::STR) => {
@@ -294,13 +293,12 @@ impl VM {
         self.reg[reg] = val;
     }
     fn inc_reg(&mut self, reg: usize, delta: u16) {
-        self.reg[reg] += delta
+        self.reg[reg] = self.reg[reg].wrapping_add(delta);
     }
 
     pub fn load_image(&mut self, file: &str) -> Result<(), io::Error> {
         let mut f = BufReader::new(File::open(file)?);
         let mut origin = f.read_u16::<BigEndian>()? as usize;
-
         while f.read_u16_into::<BigEndian>(&mut self.memory[origin..origin + 1]).is_ok() {
             origin += 1;
         }
@@ -336,9 +334,9 @@ impl VM {
 }
 
 fn sign_extend(x: u16, bit_count: i16) -> u16 {
-    (((x << (16 - bit_count)) as i16) >> (16 - bit_count)) as u16
-    /*if (x >> (bit_count - 1)) & 1 > 0 {
-        return x | (0xffff << bit_count);
+    if (x >> (bit_count - 1)) & 1 > 0 {
+        x | (0xffff << bit_count)
+    } else {
+        x
     }
-    return x;*/
 }
