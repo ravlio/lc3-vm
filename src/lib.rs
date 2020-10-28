@@ -16,6 +16,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use signal_hook::{iterator::Signals, SIGINT};
 use std::thread;
 use std::error;
+use memory::{Memory, Endianness, Error};
 
 const PC_START: u16 = 0x3000;
 
@@ -101,8 +102,8 @@ enum Trap {
     HALT = 0x25,
 }
 
-pub struct VM {
-    memory: [u16; std::u16::MAX as usize],
+pub struct VM<'a> {
+    memory: &'a mut Memory<u16>,
     reg: [u16; 12],
     is_running: Arc<AtomicBool>,
 }
@@ -110,7 +111,7 @@ pub struct VM {
 impl VM {
     pub fn new() -> Self {
         Self {
-            memory: [0; std::u16::MAX as usize],
+            memory: &mut Memory::new(std::u16::MAX as usize, std::u16::MAX as usize, Endianness::LittleEndian),
             reg: [0; 12],
             is_running: Arc::new(AtomicBool::new(false)),
         }
@@ -130,7 +131,7 @@ impl VM {
         });
 
         while self.is_running.load(Ordering::SeqCst) {
-            let instr = self.mem_read(self.get_reg(Reg::PC as usize));
+            let instr = self.mem_read(self.get_reg(Reg::PC as usize))?;
             self.inc_reg(Reg::PC as usize, 1);
             let op = instr >> 12;
 
@@ -152,8 +153,8 @@ impl VM {
                 Some(Opcode::LDI) => {
                     let r0 = ((instr >> 9) & 0b111) as usize;
                     let pc_offset = sign_extend(instr & 0x1FF, 9);
-                    let addr = self.mem_read(self.reg[Reg::PC as usize] + pc_offset);
-                    let mem = self.mem_read(addr);
+                    let addr = self.mem_read(self.reg[Reg::PC as usize] + pc_offset)?;
+                    let mem = self.mem_read(addr)?;
                     self.set_reg(r0, mem);
                     self.update_flags(r0);
                 }
@@ -196,7 +197,7 @@ impl VM {
                 Some(Opcode::LD) => {
                     let r0 = ((instr >> 9) & 0x7) as usize;
                     let pc_offset = sign_extend(instr & 0x1FF, 9);
-                    let mem = self.mem_read(self.get_reg(Reg::PC as usize) + pc_offset);
+                    let mem = self.mem_read(self.get_reg(Reg::PC as usize) + pc_offset)?;
                     self.set_reg(r0, mem);
                     self.update_flags(r0);
                 }
@@ -204,7 +205,7 @@ impl VM {
                     let r0 = ((instr >> 9) & 0x7) as usize;
                     let r1 = ((instr >> 6) & 0x7) as usize;
                     let offset = sign_extend(instr & 0x3F, 6);
-                    let mem = self.mem_read(self.get_reg(r1));
+                    let mem = self.mem_read(self.get_reg(r1))?;
                     self.set_reg(r0, mem + offset);
                     self.update_flags(r0);
                 }
@@ -212,7 +213,7 @@ impl VM {
                     let r0 = ((instr >> 9) & 0x7) as usize;
                     let r1 = ((instr >> 6) & 0x7) as usize;
                     let offset = sign_extend(instr & 0x3F, 6);
-                    self.mem_write(self.get_reg(r1) + offset, self.get_reg(r0));
+                    self.mem_write(self.get_reg(r1) + offset, self.get_reg(r0))?;
                 }
                 Some(Opcode::NOT) => {
                     let r0 = ((instr >> 9) & 0x7) as usize;
@@ -223,8 +224,8 @@ impl VM {
                 Some(Opcode::STI) => {
                     let r0 = ((instr >> 9) & 0x7) as usize;
                     let offset = sign_extend(instr & 0x1FF, 9);
-                    let addr = self.mem_read(self.get_reg(Reg::PC as usize) + offset);
-                    self.mem_write(addr, self.get_reg(r0));
+                    let addr = self.mem_read(self.get_reg(Reg::PC as usize) + offset)?;
+                    self.mem_write(addr, self.get_reg(r0))?;
                 }
                 Some(Opcode::LEA) => {
                     let r0 = ((instr >> 9) & 0x7) as usize;
@@ -235,7 +236,7 @@ impl VM {
                 Some(Opcode::ST) => {
                     let r0 = ((instr >> 9) & 0x7) as usize;
                     let offset = sign_extend(instr & 0x1FF, 9);
-                    self.mem_write(self.get_reg(Reg::PC as usize) + offset, self.get_reg(r0));
+                    self.mem_write(self.get_reg(Reg::PC as usize) + offset, self.get_reg(r0))?;
                 }
                 Some(Opcode::TRAP) => {
                     match Trap::from_u16(instr & 0xFF) {
@@ -248,7 +249,7 @@ impl VM {
                         }
                         Some(Trap::PUTS) => {
                             for i in 0.. {
-                                let char = self.mem_read(self.get_reg(Reg::R0 as usize) + i);
+                                let char = self.mem_read(self.get_reg(Reg::R0 as usize) + i)?;
                                 if char == 0 {
                                     break;
                                 }
@@ -264,7 +265,7 @@ impl VM {
                         }
                         Some(Trap::PUTSP) => {
                             for i in 0.. {
-                                let b = self.mem_read(self.get_reg(Reg::R0 as usize) + i);
+                                let b = self.mem_read(self.get_reg(Reg::R0 as usize) + i)?;
                                 if b == 0 {
                                     break;
                                 }
@@ -301,9 +302,10 @@ impl VM {
     pub fn load_image(&mut self, file: &str) -> Result<(), io::Error> {
         let mut f = BufReader::new(File::open(file)?);
         let mut origin = f.read_u16::<BigEndian>()? as usize;
-        while f.read_u16_into::<BigEndian>(&mut self.memory[origin..origin + 1]).is_ok() {
+        while let Ok(m) = f.read_u16() {
+            self.memory.write(origin, m);
             origin += 1;
-        }
+        };
 
         std::io::stdout().flush();
         Ok(())
@@ -318,20 +320,20 @@ impl VM {
             self.reg[Reg::Cond as usize] = Flag::Pos as u16;
         }
     }
-    fn mem_write(&mut self, addr: u16, val: u16) {
-        self.memory[addr as usize] = val
+    fn mem_write(&mut self, addr: u16, val: u16) -> Result<(), Error> {
+        self.memory.write(addr as usize, val)
     }
-    fn mem_read(&mut self, addr: u16) -> u16 {
+    fn mem_read(&mut self, addr: u16) -> Result<u16, Error> {
         if addr == MMAP::KBSR as u16 {
             if let Ok(ch) = std::io::stdin().read_u16::<LittleEndian>() {
-                self.memory[MMAP::KBSR as usize] = 1 << 15;
-                self.memory[MMAP::KBDR as usize] = ch;
+                self.memory.write(MMAP::KBSR as usize, 1 << 15)?;
+                self.memory.write(MMAP::KBDR as usize, ch)?;
             } else {
-                self.memory[MMAP::KBSR as usize] = 0;
+                self.memory.write(MMAP::KBSR as usize, 0)?;
             }
         }
 
-        self.memory[addr as usize]
+        self.memory.read(addr as usize)
     }
 }
 
@@ -344,6 +346,4 @@ fn sign_extend(x: u16, bit_count: i16) -> u16 {
 }
 
 #[cfg(test)]
-mod tests {
-
-}
+mod tests {}

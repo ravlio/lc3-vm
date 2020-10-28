@@ -1,9 +1,16 @@
 use crate::memory::Error::InvalidMemoryAddress;
 use core::mem;
+use std::any::Any;
 
 #[derive(Debug, PartialEq)]
 pub enum Error {
     InvalidMemoryAddress,
+}
+
+impl Error for SuperError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(&self.side)
+    }
 }
 
 pub enum Endianness {
@@ -11,98 +18,102 @@ pub enum Endianness {
     BigEndian = 1,
 }
 
-pub trait Byte {
-    fn read_byte(&self, addr: usize) -> u8;
-    fn write_byte(&mut self, addr: usize, val: u8);
-}
-
-pub trait Word<T>: Byte {
-    fn read_word(&self, addr: usize) -> Result<T, Error>;
-    fn write_word(&mut self, addr: usize, val: T) -> Result<(), Error>;
-}
-
-struct Memory {
-    max_size: usize,
-    mem: Vec<u8>,
+pub struct Memory<T> where T: Word + Copy {
+    max_size_words: usize,
+    mem: Vec<T>,
+    word_size_bits: usize,
     endianness: Endianness,
 }
 
-impl Mem {
-    fn new(size: usize, max_size: usize, endianness: Endianness) -> Self {
-        Mem {
-            max_size,
-            mem: vec![0; size],
+pub trait Word: Copy + Default {
+    fn to_be(&self) -> Self;
+    fn from_be(v: Self) -> Self;
+}
+
+impl Word for u8 {
+    fn to_be(&self) -> u8 {
+        *self
+    }
+    fn from_be(v: u8) -> u8 {
+        v
+    }
+}
+
+impl Word for u16 {
+    fn to_be(&self) -> u16 {
+        self.to_be()
+    }
+    fn from_be(v: u16) -> u16 {
+        u16::from_be(v)
+    }
+}
+
+impl Word for u32 {
+    fn to_be(&self) -> u32 {
+        self.to_be()
+    }
+    fn from_be(v: u32) -> u32 {
+        u32::from_be(v)
+    }
+}
+
+impl Word for u64 {
+    fn to_be(&self) -> u64 {
+        self.to_be()
+    }
+    fn from_be(v: u64) -> u64 {
+        u64::from_be(v)
+    }
+}
+
+impl<T: Word> Memory<T> {
+    pub fn new(size: usize, max_size_bytes: usize, endianness: Endianness) -> Self {
+        let word_size_bits = mem::size_of::<T>() * 8;
+        Memory {
+            max_size_words: max_size_bytes / word_size_bits,
+            word_size_bits,
+            mem: vec![T::default(); size],
             endianness,
         }
     }
 
     fn check_bounds(&self, addr: usize) -> bool {
-        addr > 0 && addr < self.mem.len()
+        addr > 0 && addr < self.max_size_words
     }
-}
 
-impl Byte for Mem {
-    fn read_byte(&mut self, addr: usize) -> Result<u8, Error> {
+    pub fn read(&self, addr: usize) -> Result<T, Error> {
         if !self.check_bounds(addr) {
-            Err(Error::InvalidMemoryAddress)
+            return Err(Error::InvalidMemoryAddress);
         }
-        Ok(self.mem[addr])
+
+        match self.endianness {
+            Endianness::BigEndian => {
+                Ok(self.mem[addr])
+            }
+            Endianness::LittleEndian => {
+                let a = self.mem[addr];
+                Ok(a.to_be())
+            }
+        }
     }
 
-    fn write_byte(&mut self, addr: usize, val: u8) -> Result<(), Error> {
+    pub fn write(&mut self, addr: usize, val: T) -> Result<(), Error> {
         if !self.check_bounds(addr) {
-            Err(Error::InvalidMemoryAddress)
+            return Err(Error::InvalidMemoryAddress);
         }
         if addr >= self.mem.len() {
-            self.mem.resize(addr, 0);
+            self.mem.resize(addr, T::default());
         }
-        self.mem[addr] = val;
+
+        match self.endianness {
+            Endianness::BigEndian => {
+                self.mem[addr] = val;
+            }
+            Endianness::LittleEndian => {
+                self.mem[addr] = Word::from_be(val);
+            }
+        }
+
         Ok(())
     }
 }
-
-impl Word<u8> for Mem {
-    fn read_word(&self, addr: usize) -> Result<u8, Error> {
-        self.read_b
-    }
-
-    fn write_word(&mut self, addr: usize, val: u8) -> Result<(), Error> {
-        unimplemented!()
-    }
-}
-
-/*fn read_word<T>(&self, addr: usize) -> Result<u8, Error> {}
-
-fn read_word<T>(&self, addr: usize) -> Result<T, Error> {
-    if !self.check_bounds(addr) {
-        Err(Error::InvalidMemoryAddress)
-    }
-
-    let word_size_bits = mem::size_of::<T>();
-    let word_size_bytes = size / 8;
-    if addr * word_size_bytes + word_size_bytes >= self.mem.len() {
-        Err(Error::InvalidMemoryAddress)
-    }
-
-    match self.endianness {
-        Endianness::LittleEndian => {
-            match word_size_bits {
-                8 => {
-                    Ok(1)
-                }
-                16 => {}
-                32 => {}
-                64 => {}
-                _ => {
-                    panic!("unknown word size {}", word_size_bits);
-                }
-            }
-        }
-        Endianness::BigEndian => {}
-    }
-    Ok(())
-}*/
-
-/*fn write_word(&mut self, addr: usize, val: _) {
-    unimplemented!()
-}*/
