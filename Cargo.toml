@@ -8,7 +8,9 @@ edition = "2018"
 
 [dependencies]
 enum-primitive-derive = "^0.1"
-num-traits = "^0.1"
 byteorder = "1"
 signal-hook = "0.1.16"
 termios = "0.3.3"
+num-traits = "0.2"
+num-derive = "0.3"
+clap = "3.0.0-beta.2"
