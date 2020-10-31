@@ -5,6 +5,10 @@ use clap::{App, AppSettings, Arg};
 mod vm;
 mod memory;
 mod error;
+mod compiler;
+mod lexer;
+mod token;
+mod opcode;
 
 fn run_vm(file: &str) -> Result<(), error::Error> {
     let termios = Termios::from_fd(0).unwrap();
