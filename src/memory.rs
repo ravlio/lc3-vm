@@ -1,5 +1,5 @@
 use crate::error::Error;
-
+#[allow(dead_code)]
 pub enum Endianness {
     LittleEndian = 0,
     BigEndian = 1,

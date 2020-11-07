@@ -1,13 +1,9 @@
-use std::{env, process};
 use termios::{Termios, TCSANOW, ECHO, ICANON, tcsetattr};
-use clap::{App, AppSettings, Arg};
+use clap::{App, Arg};
 
 mod vm;
 mod memory;
 mod error;
-mod compiler;
-mod lexer;
-mod token;
 mod opcode;
 
 fn run_vm(file: &str) -> Result<(), error::Error> {

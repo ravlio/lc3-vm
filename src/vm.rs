@@ -66,7 +66,7 @@ enum Opcode {
 #[derive(FromPrimitive)]
 enum MMAP {
     // keyboard status
-    KBSR = 0xff00,
+    KBSR = 0xfe00,
     // keyboard data
     KBDR = 0xfe02,
 }
@@ -78,7 +78,7 @@ enum Flag {
     Neg = 1 << 2,
 }
 
-#[derive(FromPrimitive)]
+#[derive(Debug,FromPrimitive)]
 enum Trap {
     // get character from keyboard, not echoed onto the terminal
     GETC = 0x20,
@@ -122,11 +122,14 @@ impl VM {
             }
         });
 
+        let mut i = 0;
         while self.is_running.load(Ordering::SeqCst) {
+
             let instr = self.mem_read(self.get_reg(Reg::PC as usize))?;
             self.inc_reg(Reg::PC as usize, 1);
             let op = instr >> 12;
-
+            i=i+1;
+            // println!("{:?}",Opcode::from_u16(op));
             match Opcode::from_u16(op) {
                 Some(Opcode::ADD) => {
                     let r0 = ((instr >> 9) & 0x7) as usize;
@@ -145,7 +148,7 @@ impl VM {
                 Some(Opcode::LDI) => {
                     let r0 = ((instr >> 9) & 0b111) as usize;
                     let pc_offset = sign_extend(instr & 0x1FF, 9);
-                    let addr = self.mem_read(self.reg[Reg::PC as usize] + pc_offset)?;
+                    let addr = self.mem_read(self.reg[Reg::PC as usize].wrapping_add(pc_offset))?;
                     let mem = self.mem_read(addr)?;
                     self.set_reg(r0, mem);
                     self.update_flags(r0);
@@ -159,7 +162,7 @@ impl VM {
                         let imm5 = sign_extend(instr & 0x1F, 5);
                         self.set_reg(r0, self.get_reg(r1) & imm5);
                     } else {
-                        let r2 = (instr >> 0x7) as usize;
+                        let r2 = (instr & 0x7) as usize;
                         self.set_reg(r0, self.get_reg(r1) & self.get_reg(r2));
                     }
                     self.update_flags(r0);
@@ -189,7 +192,7 @@ impl VM {
                 Some(Opcode::LD) => {
                     let r0 = ((instr >> 9) & 0x7) as usize;
                     let pc_offset = sign_extend(instr & 0x1FF, 9);
-                    let mem = self.mem_read(self.get_reg(Reg::PC as usize) + pc_offset)?;
+                    let mem = self.mem_read(self.get_reg(Reg::PC as usize).wrapping_add(pc_offset))?;
                     self.set_reg(r0, mem);
                     self.update_flags(r0);
                 }
@@ -197,15 +200,15 @@ impl VM {
                     let r0 = ((instr >> 9) & 0x7) as usize;
                     let r1 = ((instr >> 6) & 0x7) as usize;
                     let offset = sign_extend(instr & 0x3F, 6);
-                    let mem = self.mem_read(self.get_reg(r1))?;
-                    self.set_reg(r0, mem + offset);
+                    let mem = self.mem_read(self.get_reg(r1).wrapping_add(offset))?;
+                    self.set_reg(r0, mem);
                     self.update_flags(r0);
                 }
                 Some(Opcode::STR) => {
                     let r0 = ((instr >> 9) & 0x7) as usize;
                     let r1 = ((instr >> 6) & 0x7) as usize;
                     let offset = sign_extend(instr & 0x3F, 6);
-                    self.mem_write(self.get_reg(r1) + offset, self.get_reg(r0))?;
+                    self.mem_write(self.get_reg(r1).wrapping_add(offset), self.get_reg(r0))?;
                 }
                 Some(Opcode::NOT) => {
                     let r0 = ((instr >> 9) & 0x7) as usize;
@@ -216,24 +219,26 @@ impl VM {
                 Some(Opcode::STI) => {
                     let r0 = ((instr >> 9) & 0x7) as usize;
                     let offset = sign_extend(instr & 0x1FF, 9);
-                    let addr = self.mem_read(self.get_reg(Reg::PC as usize) + offset)?;
+                    let addr = self.mem_read(self.get_reg(Reg::PC as usize).wrapping_add(offset))?;
                     self.mem_write(addr, self.get_reg(r0))?;
                 }
                 Some(Opcode::LEA) => {
                     let r0 = ((instr >> 9) & 0x7) as usize;
                     let offset = sign_extend(instr & 0x1FF, 9);
-                    self.set_reg(r0, self.get_reg(Reg::PC as usize) + offset);
+                    self.set_reg(r0, self.get_reg(Reg::PC as usize).wrapping_add(offset));
                     self.update_flags(r0);
                 }
                 Some(Opcode::ST) => {
                     let r0 = ((instr >> 9) & 0x7) as usize;
                     let offset = sign_extend(instr & 0x1FF, 9);
-                    self.mem_write(self.get_reg(Reg::PC as usize) + offset, self.get_reg(r0))?;
+                    self.mem_write(self.get_reg(Reg::PC as usize).wrapping_add(offset), self.get_reg(r0))?;
                 }
                 Some(Opcode::TRAP) => {
                     match Trap::from_u16(instr & 0xFF) {
                         Some(Trap::GETC) => {
-                            self.set_reg(Reg::R0 as usize, std::io::stdin().read_u8()? as u16);
+                            let ch = std::io::stdin().read_u8()? as u16;
+                            println!("{:x}",ch);
+                            self.set_reg(Reg::R0 as usize, ch);
                         }
                         Some(Trap::OUT) => {
                             std::io::stdout().write_u8(self.get_reg(Reg::R0 as usize) as u8)?;
@@ -271,7 +276,7 @@ impl VM {
                             std::io::stdout().flush()?;
                             self.is_running.store(false, Ordering::SeqCst);
                         }
-                        _ => {}
+                        _ => {unimplemented!()}
                     }
                 }
                 _ => {}
@@ -317,9 +322,9 @@ impl VM {
     }
     fn mem_read(&mut self, addr: u16) -> Result<u16, Error> {
         if addr == MMAP::KBSR as u16 {
-            if let Ok(ch) = std::io::stdin().read_u16::<LittleEndian>() {
+            if let Ok(ch) = std::io::stdin().read_u8() {
                 self.memory.write(MMAP::KBSR as usize, 1 << 15)?;
-                self.memory.write(MMAP::KBDR as usize, ch)?;
+                self.memory.write(MMAP::KBDR as usize, ch as u16)?;
             } else {
                 self.memory.write(MMAP::KBSR as usize, 0)?;
             }
