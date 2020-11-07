@@ -122,14 +122,11 @@ impl VM {
             }
         });
 
-        let mut i = 0;
         while self.is_running.load(Ordering::SeqCst) {
 
             let instr = self.mem_read(self.get_reg(Reg::PC as usize))?;
             self.inc_reg(Reg::PC as usize, 1);
             let op = instr >> 12;
-            i=i+1;
-            // println!("{:?}",Opcode::from_u16(op));
             match Opcode::from_u16(op) {
                 Some(Opcode::ADD) => {
                     let r0 = ((instr >> 9) & 0x7) as usize;
